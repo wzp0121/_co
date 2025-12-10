@@ -32,5 +32,70 @@ CHIP CPU {
         pc[15];          // address of next instruction
 
     PARTS:
-	//// Replace this comment with your code.
+	    Not(in=instruction[15], out=isAInstr);
+
+    // A-instruction: load value directly into A-register
+    // C-instruction: load ALU output into A only if a-bit is set (instruction[5])
+    // ALoad = isAInstr=0  OR  (C-instr AND instruction[5])
+    Or(a=isAInstr, b=instruction[5], out=loadA);
+
+    // A-register
+    ARegister(
+        in=aluOut,
+        load=loadA,
+        out=aReg,
+        out[15..1]=aReg15,      // lower bits except LSB (not needed but valid)
+        out[14..0]=addressM     // addressM = A register
+    );
+
+    // D-register, loaded only when C-instruction and instruction[4] = 1
+    And(a=isAInstr, b=instruction[4], out=loadD);
+    DRegister(in=aluOut, load=loadD, out=dReg);
+
+    // Mux: ALU y-source = A-register or Memory inM
+    Mux16(a=aReg, b=inM, sel=instruction[12], out=aluY);
+
+    // ALU
+    ALU(
+        x=dReg,
+        y=aluY,
+        zx=instruction[11],
+        nx=instruction[10],
+        zy=instruction[9],
+        ny=instruction[8],
+        f=instruction[7],
+        no=instruction[6],
+        out=aluOut,
+        out=outM,
+        zr=zr,
+        ng=ng
+    );
+
+    // writeM = C-instruction AND instruction[3]
+    And(a=isAInstr, b=instruction[3], out=writeM);
+
+    // Jump logic for C-instructions
+    // Jump if (instruction[2] & ng) OR (instruction[1] & zr) OR (instruction[0] & (!zr & !ng))
+    Not(in=zr, out=nzr);
+    Not(in=ng, out=nng);
+
+    And(a=instruction[2], b=ng, out=jlt);      // JLT
+    And(a=instruction[1], b=zr, out=jeq);      // JEQ
+    And(a=instruction[0], b=nzr, out=tmp0);
+    And(a=tmp0, b=nng, out=jgt);               // JGT
+
+    Or(a=jlt, b=jeq, out=tmp1);
+    Or(a=tmp1, b=jgt, out=doJump);
+
+    // PC load = C-instruction AND doJump
+    And(a=isAInstr, b=doJump, out=pcLoad);
+
+    // PC
+    PC(
+        in=aReg,
+        load=pcLoad,
+        inc=true,
+        reset=reset,
+        out=pc
+    );
 }
