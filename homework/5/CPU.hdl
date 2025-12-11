@@ -20,42 +20,47 @@
  */
 CHIP CPU {
 
-    IN  inM[16],         // M value input  (M = contents of RAM[A])
-        instruction[16], // Instruction for execution
-        reset;           // Signals whether to re-start the current
-                         // program (reset==1) or continue executing
-                         // the current program (reset==0).
-
-    OUT outM[16],        // M value output
-        writeM,          // Write to M? 
-        addressM[15],    // Address in data memory (of M)
-        pc[15];          // address of next instruction
+// File name: projects/5/CPU.hdl
 
     PARTS:
-	    Not(in=instruction[15], out=isAInstr);
+    
+    // --- Instruction Decoding and Control Bits ---
+    
+    // isAInstr = 1 when it's an A-Instruction (instruction[15]=0)
+    // instruction[15] = 1 when it's a C-Instruction
+    Not(in=instruction[15], out=isAInstr);
 
-    // A-instruction: load value directly into A-register
-    // C-instruction: load ALU output into A only if a-bit is set (instruction[5])
-    // ALoad = isAInstr=0  OR  (C-instr AND instruction[5])
-    Or(a=isAInstr, b=instruction[5], out=loadA);
+    // 1. A-Register Input Mux: Selects value to load into A
+    // If A-Inst (sel=0), input is instruction[0..15].
+    // If C-Inst (sel=1), input is ALUout.
+    Mux16(a=instruction, b=aluOut, sel=instruction[15], out=aRegIn);
+
+    // 2. A-Register Load Control (ALoad)
+    // A-Load = isAInstr (for A-Inst) OR (C-instr AND destA=instruction[5])
+    And(a=instruction[15], b=instruction[5], out=destACSet); // C-Inst AND instruction[5]
+    Or(a=isAInstr, b=destACSet, out=loadA); // A-Inst OR destACSet
 
     // A-register
+    // ARegister is an alias for a 16-bit Register chip
     ARegister(
-        in=aluOut,
+        in=aRegIn, 
         load=loadA,
         out=aReg,
-        out[15..1]=aReg15,      // lower bits except LSB (not needed but valid)
-        out[14..0]=addressM     // addressM = A register
+        out[0..14]=addressM      // addressM = A register
     );
 
-    // D-register, loaded only when C-instruction and instruction[4] = 1
-    And(a=isAInstr, b=instruction[4], out=loadD);
+    // 3. D-Register Load Control (DLoad)
+    // LoadD = C-instruction AND instruction[4] (destD)
+    And(a=instruction[15], b=instruction[4], out=loadD); // *** CORRECTED LOGIC ***
+
+    // D-register (Register chip is often named DRegister in context)
     DRegister(in=aluOut, load=loadD, out=dReg);
 
-    // Mux: ALU y-source = A-register or Memory inM
+    // 4. Mux: ALU y-source = A-register or Memory inM
+    // sel=instruction[12] (the 'a' bit)
     Mux16(a=aReg, b=inM, sel=instruction[12], out=aluY);
 
-    // ALU
+    // 5. ALU
     ALU(
         x=dReg,
         y=aluY,
@@ -71,31 +76,34 @@ CHIP CPU {
         ng=ng
     );
 
-    // writeM = C-instruction AND instruction[3]
-    And(a=isAInstr, b=instruction[3], out=writeM);
+    // 6. Memory Write Control (writeM)
+    // writeM = C-instruction AND instruction[3] (destM)
+    And(a=instruction[15], b=instruction[3], out=writeM); // *** CORRECTED LOGIC ***
 
-    // Jump logic for C-instructions
-    // Jump if (instruction[2] & ng) OR (instruction[1] & zr) OR (instruction[0] & (!zr & !ng))
+    // 7. Jump logic for C-instructions (Logic remains correct, but tmp0, tmp1 usage is implicit)
+    
+    // JGT logic: (Instruction[0] AND !zr AND !ng)
     Not(in=zr, out=nzr);
     Not(in=ng, out=nng);
 
-    And(a=instruction[2], b=ng, out=jlt);      // JLT
-    And(a=instruction[1], b=zr, out=jeq);      // JEQ
+    And(a=instruction[2], b=ng, out=jlt);        // JLT: jump if (ng and j3)
+    And(a=instruction[1], b=zr, out=jeq);        // JEQ: jump if (zr and j2)
     And(a=instruction[0], b=nzr, out=tmp0);
-    And(a=tmp0, b=nng, out=jgt);               // JGT
+    And(a=tmp0, b=nng, out=jgt);                 // JGT: jump if (!zr and !ng and j1)
 
     Or(a=jlt, b=jeq, out=tmp1);
     Or(a=tmp1, b=jgt, out=doJump);
 
-    // PC load = C-instruction AND doJump
-    And(a=isAInstr, b=doJump, out=pcLoad);
+    // 8. PC Load Control (pcLoad)
+    // pcLoad = C-instruction AND doJump
+    And(a=instruction[15], b=doJump, out=pcLoad); // *** CORRECTED LOGIC ***
 
-    // PC
+    // 9. PC (Program Counter)
     PC(
         in=aReg,
         load=pcLoad,
         inc=true,
         reset=reset,
-        out=pc
+        out[0..14]=pc // PC is 15-bit
     );
 }
